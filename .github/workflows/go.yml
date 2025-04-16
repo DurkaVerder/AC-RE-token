@@ -22,4 +22,4 @@ jobs:
         go-version: '1.23.3'
 
     - name: Lint
-      run: ./lint-all
+      run: ./lint-all.sh
