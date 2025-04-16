@@ -12,7 +12,7 @@ echo -e "${GREEN}Проверка кода...${NC}"
 
 
 if golangci-lint run --config="$CONFIG_PATH" ./...; then
-  echo -e "${GREEN}Линтинг успешен"
+  echo -e "${GREEN}Проверка кода завершена успешно${NC}"
 else
   echo -e "${RED}Найдены проблемы"
 fi
