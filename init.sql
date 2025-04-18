@@ -11,6 +11,7 @@ CREATE TABLE users (
 INSERT INTO users (id, name, email, password) VALUES
 ("1e2d3c4b-5a6f-7g8h-9i0j-k1l2m3n4o5p6", "Tim", "vrrrr228@gmail.com", "1234");
 
+
 CREATE TABLE refresh_token (
     id SERIAL PRIMARY KEY,
     user_id GUID NOT NULL,
