@@ -1,5 +1,17 @@
 package service
 
+import (
+	"os"
+	"time"
+
+	"github.com/golang-jwt/jwt"
+	"github.com/google/uuid"
+)
+
+const (
+	lifeTimeAccessToken = 15 * time.Minute
+)
+
 type DB interface {
 }
 
@@ -11,46 +23,53 @@ func NewService(db DB) *Service {
 	return &Service{db: db}
 }
 
-func (s *Service) GenerateAccessToken(userGUID uint64) (string, error) {
-	// Generate a new access token for the user with the given GUID
-	// This is a placeholder implementation and should be replaced with actual logic
-	return "new_access_token", nil
+func (s *Service) GenerateTokens(userGUID, userIP string) (string, string, error) {
+
+	jti := uuid.New().String()
+	accessToken, err := s.generateAccessToken(userGUID, userIP, jti)
+	if err != nil {
+		return "", "", err
+	}
+
+	refreshToken, err := s.generateRefreshToken(userGUID, userIP, jti)
+	if err != nil {
+		return "", "", err
+	}
+
+	// TODO: write check and add refresh token to db
+
+	return accessToken, refreshToken, nil
 }
 
-func (s *Service) GenerateRefreshToken(userGUID uint64) (string, error) {
+func (s *Service) generateAccessToken(userGUID, userIP, jti string) (string, error) {
+
+	accessToken, err := s.generateJwtToken(userGUID, userIP, jti)
+	if err != nil {
+		return "", err
+	}
+
+	return accessToken, nil
+}
+
+func (s *Service) generateRefreshToken(userGUID, userIP, jti string) (string, error) {
 	// Generate a new refresh token for the user with the given GUID
 	// This is a placeholder implementation and should be replaced with actual logic
 	return "new_refresh_token", nil
 }
 
-func (s *Service) RefreshAccessToken(refreshToken string) (string, error) {
-	// Validate the refresh token and generate a new access token
-	// This is a placeholder implementation and should be replaced with actual logic
-	return "refreshed_access_token", nil
-}
+func (s *Service) generateJwtToken(userGUID, userIP, jti string) (string, error) {
 
-func (s *Service) RefreshRefreshToken(refreshToken string) (string, error) {
-	// Validate the refresh token and generate a new refresh token
-	// This is a placeholder implementation and should be replaced with actual logic
-	return "refreshed_refresh_token", nil
-}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"guid": userGUID,
+		"ip":   userIP,
+		"jti":  jti,
+		"exp":  time.Now().Add(lifeTimeAccessToken).Unix(),
+	}).SignedString([]byte(os.Getenv("SUPER-SECRET-KEY")))
+	if err != nil {
+		return "", err
+	}
 
-func (s *Service) ValidateAccessToken(accessToken string) (int, error) {
-	// Validate the access token and return the GUID of the user it belongs to
-	// This is a placeholder implementation and should be replaced with actual logic
-	return 12345, nil
-}
-
-func (s *Service) ValidateRefreshToken(refreshToken string) (int, error) {
-	// Validate the refresh token and return the GUID of the user it belongs to
-	// This is a placeholder implementation and should be replaced with actual logic
-	return 12345, nil
-}
-
-func (s *Service) generateJwtToken(userGUID uint64) (string, error) {
-	// Generate a JWT token for the user with the given ID and token type
-	// This is a placeholder implementation and should be replaced with actual logic
-	return "jwt_token", nil
+	return token, nil
 }
 
 func (s *Service) SendEmailWarning(userGUID uint64) error {
