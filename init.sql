@@ -15,12 +15,10 @@ INSERT INTO users (id, name, email, password) VALUES
 CREATE TABLE refresh_token (
     id SERIAL PRIMARY KEY,
     user_id UUID NOT NULL,
-    token VARCHAR(255) NOT NULL,
-    access_tokenId VARCHAR(255) NOT NULL,
+    token_hash VARCHAR(255) NOT NULL,
     ip_address VARCHAR(255) NOT NULL,
-    expired_at TIMESTAMP NOT NULL,
     isRevoked BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens(user_id);

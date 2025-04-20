@@ -1,14 +1,15 @@
 package handler
 
 import (
+	"AC-RE-token/internal/models"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
 
 type Service interface {
-	GenerateTokens(userGUID, userIP string) (string, string, error)
-	RefreshToken() string
+	GenerateTokens(userGUID, userIP string) (models.TokenResponse, error)
+	RefreshToken(request models.TokenRequest) (models.TokenResponse, error)
 }
 
 type Handler struct {
@@ -22,17 +23,38 @@ func NewHandler(service Service) *Handler {
 func (h *Handler) GetTokens(c *gin.Context) {
 
 	userGUID := c.Param("userGUID")
+	if userGUID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User GUID is required"})
+		return
+	}
 
 	ip := c.ClientIP()
+	if ip == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Client IP is required"})
+		return
+	}
 
-	accessToken, refreshToken, err := h.service.GenerateTokens(userGUID, ip)
+	response, err := h.service.GenerateTokens(userGUID, ip)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate tokens"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"access_token":  accessToken,
-		"refresh_token": refreshToken,
-	})
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) RefreshToken(c *gin.Context) {
+	var tokenRequest models.TokenRequest
+	if err := c.ShouldBindJSON(&tokenRequest); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	newTokens, err := h.service.RefreshToken(tokenRequest)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh token"})
+		return
+	}
+
+	c.JSON(http.StatusOK, newTokens)
 }
