@@ -11,12 +11,17 @@ CREATE TABLE users (
 INSERT INTO users (id, name, email, password) VALUES
 ('1e2d3c4b-5a6f-4f8a-9c0d-a1b2c3d4e5f6', 'Tim', 'vrrrr228@gmail.com', '1234');
 
+INSERT INTO users (id, name, email, password) VALUES
+('1e2d3c4b-5a6f-4f7a-9c0d-a1b2c3d4e5f6', 'Tim2', 'vrrrr227@gmail.com', '12345');
+
+
 
 CREATE TABLE refresh_token (
     id SERIAL PRIMARY KEY,
     user_id UUID NOT NULL,
     token_hash VARCHAR(255) NOT NULL,
     ip_address VARCHAR(255) NOT NULL,
+    jti VARCHAR(255) NOT NULL,
     isRevoked BOOLEAN DEFAULT FALSE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );

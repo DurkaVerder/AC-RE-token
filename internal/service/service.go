@@ -21,8 +21,10 @@ const (
 )
 
 type DB interface {
-	AddRefreshToken(userGUID, userIP, refreshTokenHash string) error
-	GetRefreshToken(userGUID string) (string, error)
+	AddRefreshToken(userGUID, jti, refreshTokenHash, userIP string) error
+	GetRefreshToken(userGUID, jti string) (string, error)
+	GetUserIP(userGUID, jti string) (string, error)
+	SetRevoked(userGUID, jti string) error
 }
 
 type Service struct {
@@ -72,7 +74,6 @@ func (s *Service) RefreshToken(request models.TokenRequest, userIP string) (mode
 	if err != nil {
 		return models.TokenResponse{}, err
 	}
-
 	if !ok {
 		return models.TokenResponse{}, fmt.Errorf("invalid access token")
 	}
@@ -130,16 +131,29 @@ func (s *Service) generateRefreshToken(userGUID, userIP, jti string) (string, er
 }
 
 func (s *Service) addRefreshTokenToDB(userGUID, userIP, refreshToken string) error {
-	refreshTokenHash, err := bcrypt.GenerateFromPassword([]byte(refreshToken), bcrypt.DefaultCost)
+	refreshTokenData, err := s.parseRefreshToken(refreshToken)
+	if err != nil {
+		return err
+	}
+	jti := refreshTokenData.JTI
+	refreshTokenHash, err := s.bcryptHashRefreshToken(refreshToken)
 	if err != nil {
 		return err
 	}
 
-	if err := s.db.AddRefreshToken(userGUID, userIP, string(refreshTokenHash)); err != nil {
+	if err := s.db.AddRefreshToken(userGUID, jti, refreshTokenHash, userIP); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (s *Service) bcryptHashRefreshToken(refreshToken string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(refreshToken), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
 }
 
 func (s *Service) generateJwtToken(userGUID, userIP, jti string) (string, error) {
@@ -157,21 +171,34 @@ func (s *Service) generateJwtToken(userGUID, userIP, jti string) (string, error)
 	return token, nil
 }
 
-func (s *Service) sendEmailWarning(userGUID uint64) error {
-	// Send an email warning to the user with the given ID
-	// This is a placeholder implementation and should be replaced with actual logic
-	return nil
-}
-
 func (s *Service) parseRefreshToken(tokenStr string) (*models.RefreshTokenData, error) {
 	tokenBytes, err := base64.StdEncoding.DecodeString(tokenStr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to decode refresh token: %w", err)
 	}
 
 	var refreshToken models.RefreshToken
 	if err := json.Unmarshal(tokenBytes, &refreshToken); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to unmarshal refresh token: %w", err)
+	}
+
+	data, err := json.Marshal(refreshToken.Data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal refresh token data: %w", err)
+	}
+
+	mac := hmac.New(sha512.New, []byte(os.Getenv("SUPER-SECRET-KEY-RE")))
+	if _, err := mac.Write(data); err != nil {
+		return nil, fmt.Errorf("failed to compute HMAC: %w", err)
+	}
+
+	expectedSignature := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	if expectedSignature != refreshToken.Signature {
+		return nil, fmt.Errorf("invalid refresh token signature")
+	}
+
+	if time.Now().Unix() > refreshToken.Data.Exp {
+		return nil, fmt.Errorf("refresh token expired")
 	}
 
 	return &refreshToken.Data, nil
@@ -190,18 +217,15 @@ func (s *Service) parseAccessToken(tokenStr string) (*jwt.Token, error) {
 
 	return token, nil
 }
-
 func (s *Service) validateAccessWithRefreshToken(accessToken *jwt.Token, refreshToken models.RefreshTokenData, refreshTokenForCheckHash string, userIP string) (bool, error) {
-
 	if !accessToken.Valid {
 		return false, fmt.Errorf("invalid access token")
 	}
 
-	ok, err := s.compareHashsRefreshToken(refreshTokenForCheckHash, refreshToken.UserGUID)
+	ok, err := s.compareHashRefreshToken(refreshTokenForCheckHash, refreshToken.UserGUID, refreshToken.JTI)
 	if err != nil {
 		return false, err
 	}
-
 	if !ok {
 		return false, fmt.Errorf("invalid refresh token")
 	}
@@ -209,6 +233,15 @@ func (s *Service) validateAccessWithRefreshToken(accessToken *jwt.Token, refresh
 	claims, ok := accessToken.Claims.(jwt.MapClaims)
 	if !ok {
 		return false, fmt.Errorf("invalid access token claims")
+	}
+
+	t, ok := claims["exp"].(float64) 
+	if !ok {
+		return false, fmt.Errorf("invalid access token expiration time")
+	}
+
+	if int64(t) < time.Now().Unix() {
+		return false, fmt.Errorf("access token expired")
 	}
 
 	if claims["guid"] != refreshToken.UserGUID {
@@ -219,19 +252,38 @@ func (s *Service) validateAccessWithRefreshToken(accessToken *jwt.Token, refresh
 		return false, fmt.Errorf("not equal jti")
 	}
 
-	return false, nil
-}
-
-func (s *Service) compareHashsRefreshToken(refreshTokenHash, userGUID string) (bool, error) {
-	refershTokenFromDB, err := s.db.GetRefreshToken(userGUID)
+	userIPFromDB, err := s.db.GetUserIP(refreshToken.UserGUID, refreshToken.JTI)
 	if err != nil {
 		return false, err
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(refershTokenFromDB), []byte(refreshTokenHash))
-	if err != nil {
-		return false, err
+	if userIPFromDB != userIP {
+		if err := s.sendEmailWarning(refreshToken.UserGUID); err != nil {
+			return false, err
+		}
 	}
 
 	return true, nil
+}
+
+func (s *Service) compareHashRefreshToken(refreshTokenHash, userGUID, jti string) (bool, error) {
+	refreshTokenFromDB, err := s.db.GetRefreshToken(userGUID, jti)
+	if err != nil {
+		return false, err
+	}
+	if refreshTokenFromDB == "" {
+		return false, nil
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(refreshTokenFromDB), []byte(refreshTokenHash))
+	if err != nil {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func (s *Service) sendEmailWarning(userGUID string) error {
+
+	return nil
 }
