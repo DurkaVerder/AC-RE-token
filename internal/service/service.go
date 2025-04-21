@@ -6,6 +6,7 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"time"
 
@@ -21,6 +22,7 @@ const (
 
 type DB interface {
 	AddRefreshToken(userGUID, userIP, refreshTokenHash string) error
+	GetRefreshToken(userGUID string) (string, error)
 }
 
 type Service struct {
@@ -52,6 +54,35 @@ func (s *Service) GenerateTokens(userGUID, userIP string) (*models.TokenResponse
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 	}, nil
+}
+
+func (s *Service) RefreshToken(request models.TokenRequest, userIP string) (models.TokenResponse, error) {
+
+	refreshTokenData, err := s.parseRefreshToken(request.RefreshToken)
+	if err != nil {
+		return models.TokenResponse{}, err
+	}
+
+	accessToken, err := s.parseAccessToken(request.AccessToken)
+	if err != nil {
+		return models.TokenResponse{}, err
+	}
+
+	ok, err := s.validateAccessWithRefreshToken(accessToken, *refreshTokenData, request.RefreshToken, userIP)
+	if err != nil {
+		return models.TokenResponse{}, err
+	}
+
+	if !ok {
+		return models.TokenResponse{}, fmt.Errorf("invalid access token")
+	}
+
+	response, err := s.GenerateTokens(refreshTokenData.UserGUID, userIP)
+	if err != nil {
+		return models.TokenResponse{}, err
+	}
+
+	return *response, nil
 }
 
 func (s *Service) generateAccessToken(userGUID, userIP, jti string) (string, error) {
@@ -130,4 +161,77 @@ func (s *Service) sendEmailWarning(userGUID uint64) error {
 	// Send an email warning to the user with the given ID
 	// This is a placeholder implementation and should be replaced with actual logic
 	return nil
+}
+
+func (s *Service) parseRefreshToken(tokenStr string) (*models.RefreshTokenData, error) {
+	tokenBytes, err := base64.StdEncoding.DecodeString(tokenStr)
+	if err != nil {
+		return nil, err
+	}
+
+	var refreshToken models.RefreshToken
+	if err := json.Unmarshal(tokenBytes, &refreshToken); err != nil {
+		return nil, err
+	}
+
+	return &refreshToken.Data, nil
+}
+
+func (s *Service) parseAccessToken(tokenStr string) (*jwt.Token, error) {
+	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(os.Getenv("SUPER-SECRET-KEY")), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return token, nil
+}
+
+func (s *Service) validateAccessWithRefreshToken(accessToken *jwt.Token, refreshToken models.RefreshTokenData, refreshTokenForCheckHash string, userIP string) (bool, error) {
+
+	if !accessToken.Valid {
+		return false, fmt.Errorf("invalid access token")
+	}
+
+	ok, err := s.compareHashsRefreshToken(refreshTokenForCheckHash, refreshToken.UserGUID)
+	if err != nil {
+		return false, err
+	}
+
+	if !ok {
+		return false, fmt.Errorf("invalid refresh token")
+	}
+
+	claims, ok := accessToken.Claims.(jwt.MapClaims)
+	if !ok {
+		return false, fmt.Errorf("invalid access token claims")
+	}
+
+	if claims["guid"] != refreshToken.UserGUID {
+		return false, fmt.Errorf("not equal guid")
+	}
+
+	if claims["jti"] != refreshToken.JTI {
+		return false, fmt.Errorf("not equal jti")
+	}
+
+	return false, nil
+}
+
+func (s *Service) compareHashsRefreshToken(refreshTokenHash, userGUID string) (bool, error) {
+	refershTokenFromDB, err := s.db.GetRefreshToken(userGUID)
+	if err != nil {
+		return false, err
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(refershTokenFromDB), []byte(refreshTokenHash))
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
 }

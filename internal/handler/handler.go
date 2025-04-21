@@ -9,7 +9,7 @@ import (
 
 type Service interface {
 	GenerateTokens(userGUID, userIP string) (models.TokenResponse, error)
-	RefreshToken(request models.TokenRequest) (models.TokenResponse, error)
+	RefreshToken(request models.TokenRequest, userIP string) (models.TokenResponse, error)
 }
 
 type Handler struct {
@@ -50,7 +50,13 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	newTokens, err := h.service.RefreshToken(tokenRequest)
+	userIP := c.ClientIP()
+	if userIP == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Client IP is required"})
+		return
+	}
+
+	newTokens, err := h.service.RefreshToken(tokenRequest, userIP)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh token"})
 		return
