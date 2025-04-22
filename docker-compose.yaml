@@ -28,6 +28,8 @@ services:
       dockerfile: Dockerfile
     container_name: auth
     environment:
+      - SUPER-SECRET-KEY=fs1hk56jhldk12bv6dsh7
+      - SUPER-SECRET-KEY-RE=mdhsz1pd1h6jhjldk1ds7
       - MAIL=hotelbooking02@mail.ru
       - EMAIL_PASSWORD=hPWFLzDD5mqWMPy1G1ty
       - SMTP_HOST=smtp.mail.ru
