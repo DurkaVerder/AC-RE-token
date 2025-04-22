@@ -2,14 +2,16 @@ package handler
 
 import (
 	"AC-RE-token/internal/models"
+	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
 
 type Service interface {
-	GenerateTokens(userGUID, userIP string) (models.TokenResponse, error)
-	RefreshToken(request models.TokenRequest, userIP string) (models.TokenResponse, error)
+	GenerateTokens(userGUID, userIP string) (*models.TokenResponse, error)
+	RefreshToken(request models.TokenRequest, userIP string) (*models.TokenResponse, error)
 }
 
 type Handler struct {
@@ -20,7 +22,7 @@ func NewHandler(service Service) *Handler {
 	return &Handler{service: service}
 }
 
-func (h *Handler) GetTokens(c *gin.Context) {
+func (h *Handler) GenerateToken(c *gin.Context) {
 
 	userGUID := c.Param("userGUID")
 	if userGUID == "" {
@@ -50,16 +52,19 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	userIP := c.ClientIP()
-	if userIP == "" {
+	ip := c.ClientIP()
+	if ip == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Client IP is required"})
 		return
 	}
 
-	newTokens, err := h.service.RefreshToken(tokenRequest, userIP)
+	newTokens, err := h.service.RefreshToken(tokenRequest, ip)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh token"})
-		return
+		if errors.Is(err, fmt.Errorf("invalid access token")) || errors.Is(err, fmt.Errorf("invalid refresh token")) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh token"})
+		}
 	}
 
 	c.JSON(http.StatusOK, newTokens)

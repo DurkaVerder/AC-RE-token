@@ -2,12 +2,14 @@ package service
 
 import (
 	"AC-RE-token/internal/models"
+	"AC-RE-token/internal/notification"
 	"crypto/hmac"
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt"
@@ -18,6 +20,7 @@ import (
 const (
 	lifeTimeAccessToken  = 15 * time.Minute
 	lifeTimeRefreshToken = 7 * 24 * time.Hour
+	countWorkers         = 5
 )
 
 type DB interface {
@@ -25,14 +28,24 @@ type DB interface {
 	GetRefreshToken(userGUID, jti string) (string, error)
 	GetUserIP(userGUID, jti string) (string, error)
 	SetRevoked(userGUID, jti string) error
+	GetUserEmail(userID string) (string, error)
 }
 
 type Service struct {
-	db DB
+	wg *sync.WaitGroup
+
+	db     DB
+	notify *notification.EmailNotifier
+
+	userIDChan chan string
 }
 
-func NewService(db DB) *Service {
-	return &Service{db: db}
+func NewService(db DB, notify *notification.EmailNotifier, userChan chan string) *Service {
+	return &Service{
+		db:         db,
+		notify:     notify,
+		userIDChan: userChan,
+	}
 }
 
 func (s *Service) GenerateTokens(userGUID, userIP string) (*models.TokenResponse, error) {
@@ -58,32 +71,36 @@ func (s *Service) GenerateTokens(userGUID, userIP string) (*models.TokenResponse
 	}, nil
 }
 
-func (s *Service) RefreshToken(request models.TokenRequest, userIP string) (models.TokenResponse, error) {
+func (s *Service) RefreshToken(request models.TokenRequest, userIP string) (*models.TokenResponse, error) {
 
 	refreshTokenData, err := s.parseRefreshToken(request.RefreshToken)
 	if err != nil {
-		return models.TokenResponse{}, err
+		return nil, err
 	}
 
 	accessToken, err := s.parseAccessToken(request.AccessToken)
 	if err != nil {
-		return models.TokenResponse{}, err
+		return nil, err
 	}
 
 	ok, err := s.validateAccessWithRefreshToken(accessToken, *refreshTokenData, request.RefreshToken, userIP)
 	if err != nil {
-		return models.TokenResponse{}, err
+		return nil, err
 	}
 	if !ok {
-		return models.TokenResponse{}, fmt.Errorf("invalid access token")
+		return nil, fmt.Errorf("invalid access token")
+	}
+
+	if err := s.db.SetRevoked(refreshTokenData.UserGUID, refreshTokenData.JTI); err != nil {
+		return nil, err
 	}
 
 	response, err := s.GenerateTokens(refreshTokenData.UserGUID, userIP)
 	if err != nil {
-		return models.TokenResponse{}, err
+		return nil, err
 	}
 
-	return *response, nil
+	return response, nil
 }
 
 func (s *Service) generateAccessToken(userGUID, userIP, jti string) (string, error) {
@@ -235,7 +252,7 @@ func (s *Service) validateAccessWithRefreshToken(accessToken *jwt.Token, refresh
 		return false, fmt.Errorf("invalid access token claims")
 	}
 
-	t, ok := claims["exp"].(float64) 
+	t, ok := claims["exp"].(float64)
 	if !ok {
 		return false, fmt.Errorf("invalid access token expiration time")
 	}
@@ -258,9 +275,7 @@ func (s *Service) validateAccessWithRefreshToken(accessToken *jwt.Token, refresh
 	}
 
 	if userIPFromDB != userIP {
-		if err := s.sendEmailWarning(refreshToken.UserGUID); err != nil {
-			return false, err
-		}
+		s.userIDChan <- refreshToken.UserGUID
 	}
 
 	return true, nil
@@ -285,5 +300,31 @@ func (s *Service) compareHashRefreshToken(refreshTokenHash, userGUID, jti string
 
 func (s *Service) sendEmailWarning(userGUID string) error {
 
+	email, err := s.db.GetUserEmail(userGUID)
+	if err != nil {
+		return err
+	}
+
+	err = s.notify.SendWarning(email, notification.WarningNotifyEmailAnotherIP)
+	if err != nil {
+		return fmt.Errorf("error send email: %v", err)
+	}
+
 	return nil
+}
+
+func (s *Service) workerSendEmail() {
+	defer s.wg.Done()
+	for userID := range s.userIDChan {
+		if err := s.sendEmailWarning(userID); err != nil {
+			fmt.Printf("error send email: %v\n", err)
+		}
+	}
+}
+
+func (s *Service) StartWorker() {
+	for i := 0; i < countWorkers; i++ {
+		s.wg.Add(1)
+		go s.workerSendEmail()
+	}
 }

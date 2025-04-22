@@ -1,0 +1,50 @@
+version: '3.9'
+
+services:
+
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: durka
+      POSTGRES_DB: auth-database
+    ports:
+      - "5432:5432" 
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - auth-network
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: auth
+    environment:
+      - MAIL=hotelbooking02@mail.ru
+      - EMAIL_PASSWORD=hPWFLzDD5mqWMPy1G1ty
+      - SMTP_HOST=smtp.mail.ru
+      - SMTP_PORT=465
+      - DB_URL=postgres://postgres:durka@postgres:5432/auth-database?sslmode=disable
+      - PORT=:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - auth-network  
+    
+
+
+volumes:
+  postgres_data:
+
+networks:
+  auth-network:
+    driver: bridge

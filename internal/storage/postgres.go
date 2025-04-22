@@ -1,8 +1,13 @@
-package store
+package storage
 
-import "database/sql"
+import (
+	"database/sql"
+
+	_ "github.com/lib/pq"
+)
 
 const (
+	GetUserEmailQuery    = `SELECT email FROM users WHERE id = $1`
 	GetRefreshTokenQuery = `SELECT token_hash FROM refresh_token WHERE user_id = $1 AND jti = $2 AND isRevoked = false`
 	AddRefreshTokenQuery = `INSERT INTO refresh_token (user_id, jti, token_hash, ip_address) VALUES ($1, $2, $3, $4)`
 	GetUserIPQuery       = `SELECT ip_address FROM refresh_token WHERE user_id = $1 AND jti = $2 AND isRevoked = false`
@@ -57,4 +62,17 @@ func (p *Postgres) SetRevoked(userID, jti string) error {
 		return err
 	}
 	return nil
+}
+
+func (p *Postgres) GetUserEmail(userID string) (string, error) {
+	row := p.db.QueryRow(GetUserEmailQuery, userID)
+	var email string
+	err := row.Scan(&email)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+	return email, nil
 }
