@@ -42,6 +42,7 @@ type Service struct {
 
 func NewService(db DB, notify *notification.EmailNotifier, userChan chan string) *Service {
 	return &Service{
+		wg:         &sync.WaitGroup{},
 		db:         db,
 		notify:     notify,
 		userIDChan: userChan,

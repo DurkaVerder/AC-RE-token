@@ -22,7 +22,7 @@ func NewServer(handler Handler, r *gin.Engine) *Server {
 }
 
 func (s *Server) initRoutes() {
-	s.r.POST("/api/v1/token", s.handler.GenerateToken)
+	s.r.GET("/api/v1/token/:userGUID", s.handler.GenerateToken)
 	s.r.POST("/api/v1/refresh-token", s.handler.RefreshToken)
 }
 

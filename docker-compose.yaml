@@ -2,9 +2,9 @@ version: '3.9'
 
 services:
 
-  postgres:
+  db:
     image: postgres:15
-    container_name: postgres
+    container_name: db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: durka
@@ -34,10 +34,12 @@ services:
       - EMAIL_PASSWORD=hPWFLzDD5mqWMPy1G1ty
       - SMTP_HOST=smtp.mail.ru
       - SMTP_PORT=465
-      - DB_URL=postgres://postgres:durka@postgres:5432/auth-database?sslmode=disable
+      - DB_URL=postgres://postgres:durka@db:5432/auth-database?sslmode=disable
       - PORT=:8080
+    ports:
+      - "8080:8080" 
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
     networks:
       - auth-network  
